@@ -5,19 +5,6 @@ var util = require("util"),
     colors = require("colors"),
     chrome = require("chrome-remote-interface");
 
-//    ChromeClient = require("chrome-remote-interface/lib/chrome.js");
-
-/*
-function createClient() {
-    var events = require('events');
-    var notifier = new events.EventEmitter();
-    var c = new ChromeClient({}, notifier);
-    notifier.on('connect', function() { c.emit('connect') });
-    notifier.on('error', function(e) { c.emit('error', e) });
-    return c;
-}
-*/
-
 const PROP_SHOW_COUNT = 5;
 
 module.exports = ChromeREPL;
@@ -53,7 +40,6 @@ ChromeREPL.prototype = {
   connect: function(options, cb) {
     var self = this;
     self.options = options;
-    //var client = createClient();
     var client = chrome.createClient();
     client.on("error", function(error) {
       console.log(error);
@@ -66,62 +52,46 @@ ChromeREPL.prototype = {
   },
 
   writer: function(output) {
-    if (!output || output.type != "object") {
+
+    function propertyValue(t, v) {
+      if (t == 'string')
+        return util.inspect(v, { colors: true });
+      return t.grey;
+    }
+    function propertyPreview(p) {
+      return p.name.magenta + ': ' + propertyValue(p.type, p.value);
+    }
+    function showPreview(obj) {
+      return obj.className.yellow + " { " + 
+         obj.preview.properties.map(propertyPreview).join(', ') + 
+      "}";
+    }
+    if (output.wasThrown) {
+      return output.result.description.red;
+    }
+    if (output.result.type == 'undefined')
+      return '';
+
+    if (!output || output.result.type != "object") {
       // let inspect do its thing if it's a literal
-      return util.inspect(output, { colors: true });
+      return util.inspect(output.result.value, { colors: true });
     }
-    // do our own object summary
-    var str = "";
-    str += output.class.yellow + " { ";
-
-    var props = {};
-
-    // show first N properties of an object, starting with getters
-    var getters = output.safeGetterValues;
-    var names = Object.keys(getters).slice(0, PROP_SHOW_COUNT);
-    names.map(function(name) {
-      props[name] = getters[name];
-    })
-
-    // then the own properties
-    var ownProps = output.ownProps;
-    var remaining = PROP_SHOW_COUNT - names.length;
-    if (remaining) {
-      names = Object.keys(ownProps).slice(0, remaining);
-      names.map(function(name) {
-        props[name] = ownProps[name];
-      });
+    if (output.result.type === "object") {
+      return showPreview(output.result);
     }
-
-    // write out a few properties and their values
-    var strs = [];
-    for (name in props) {
-      var value = props[name].value;
-      value = this.transformResult(value);
-
-      if (value && value.type == "object") {
-        value = ("[object " + value.class + "]").cyan;
-      }
-      else {
-        value = util.inspect(props[name].value, { colors: true });
-      }
-      strs.push(name.magenta + ": " + value);
-    }
-    str += strs.join(", ");
-
-    // write the number of remaining properties
-    var total = Object.keys(getters).length + Object.keys(ownProps).length;
-    var more = total - PROP_SHOW_COUNT;
-    if (more > 0) {
-      str += ", ..." + (more + " more").grey
-    }
-    str += " } ";
-
-    return str;
   },
 
   write: function(str, cb) {
     this.repl.outputStream.write(str, cb);
+  },
+  
+  writeLn: function(str, cb) {
+    this.repl.prompt = '';
+    this.repl.displayPrompt();
+    this.repl.outputStream.write(str + '\n');
+    this.repl.prompt = this.getPrompt();
+    this.repl.displayPrompt();
+    if (cb) cb();
   },
 
   setTab: function(tab, cb) {
@@ -131,6 +101,22 @@ ChromeREPL.prototype = {
     this.client.removeAllListeners(); 
     this.client.on('connect', function() {
       cb();
+      self.client.Console.enable();
+      function handleMessage(message) {
+        if (message.message.level !== 'log')
+          return;
+        var prefix = "> ".blue;
+        self.writeLn(prefix + message.message.text);
+        self.repl.displayPrompt();
+      }
+      self.client.Console.messageAdded(function(message) {
+        self.lastMessage = message;
+        handleMessage(message);
+      });
+      // TODO: implement counter. Meanwhile, just repeat last message
+      self.client.Console.messageRepeatCountUpdated(function() {
+        handleMessage(self.lastMessage);
+      });
       self.repl.prompt = self.getPrompt();
       self.repl.displayPrompt();
     });
@@ -153,32 +139,8 @@ ChromeREPL.prototype = {
 
   evalInTab: function(input, cb) {
     this.client.Runtime.evaluate({expression: input, generatePreview: true}, function(err, resp) {
-      console.log(resp);
-      return cb(resp);
-
-      if (err) throw err;
-
-      if (resp.exception) {
-        cb(resp.exceptionMessage);
-        return;
-      }
-
-      var result = resp.result;
-
-      if (result.type == "object") {
-        result.ownPropertiesAndPrototype(function(err, resp) {
-          if (err) return cb(err);
-
-          result.safeGetterValues = resp.safeGetterValues;
-          result.ownProps = resp.ownProperties;
-
-          cb(null, result);
-        })
-      }
-      else {
-        cb(null, this.transformResult(resp.result));
-      }
-    }.bind(this))
+      return cb(null, resp);
+    });
   },
 
   transformResult: function(result) {
