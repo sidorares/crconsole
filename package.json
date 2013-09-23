@@ -1,0 +1,29 @@
+{
+  "name": "crconsole",
+  "version": "0.0.1",
+  "description": "Remote JavaScript console for Chrome/Webkit",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sidorares/crconsole"
+  },
+  "keywords": [
+    "remote",
+    "debugging",
+    "repl",
+    "console",
+    "chrome",
+    "chromium",
+    "developer tools",
+    "webkit"
+  ],
+  "bin": {
+    "crconsole": "./bin/repl.js"
+  },
+  "author": "Andrey Sidorov <sidorares@yandex.ru>",
+  "license": "MIT",
+  "dependencies": {
+    "chrome-remote-interface": "git://github.com/sidorares/chrome-remote-interface.git#switch-tab"",
+    "commander": "~2.0.0",
+    "colors": "~0.6.2"
+  }
+}
