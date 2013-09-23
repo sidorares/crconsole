@@ -1,7 +1,8 @@
 # crconsole
 `crconsole` is a remote Javascript console for Chrome/Webkit that runs in your terminal:
 
-![fxconsole in Terminal](http://i.imgur.com/iKXwCsD.png)
+![crconsole in Terminal]((https://f.cloud.github.com/assets/173025/1189411/f0b083a8-2410-11e3-905b-53543c0fc57f.png)
+)
 
 ## Install
 With [node.js](http://nodejs.org/) and the npm package manager:
