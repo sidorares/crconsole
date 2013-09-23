@@ -33,7 +33,7 @@ There are two extra REPL commands available beyond the standard node.js commands
 ## See also
 
   - [fxconsole](https://github.com/harthur/fxconsole) - remote Javascript console for Firefox
-  - [firefox-xlient](https://github.com/harthur/firefox-client) - client for [Firefox Remote Debugging Protocol](https://wiki.mozilla.org/Remote_Debugging_Protocol)
+  - [firefox-client](https://github.com/harthur/firefox-client) - client for [Firefox Remote Debugging Protocol](https://wiki.mozilla.org/Remote_Debugging_Protocol)
   - [chrome-remote-interface](https://github.com/cyrus-and/chrome-remote-interface) - client for [Remote Debugging Protocol](https://developers.google.com/chrome-developer-tools/docs/protocol/1.0/), also features simple REPL.
 
 ## Credits
