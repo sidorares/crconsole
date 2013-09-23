@@ -12,7 +12,7 @@ You can now use `crconsole` from the command line.
 
 ## Connecting
 
-Stert chrome with remote protocol enabled:
+Start chrome with remote protocol enabled:
 
 ```
 google-chrome --remote-debugging-port=9222
@@ -20,7 +20,7 @@ google-chrome --remote-debugging-port=9222
 
 
 ```
-$> crconsole --port 9222
+$> crconsole
 google.com> 1+1
 2
 ```
