@@ -95,7 +95,6 @@ ChromeREPL.prototype = {
          callback(err, res);
       });
     };
-
     var lastExpr = line.trim().split(/[ {}();\/\\]+/).slice(-1)[0];
     if (!lastExpr)
       return callback(null, [[], line]);
@@ -103,10 +102,10 @@ ChromeREPL.prototype = {
     var path = lastExpr.split('.');
     var expr, partial;
     if (path.length === 0) {
-       expr = this;
+       expr = 'this';
        partial = '';
     } else if (path.length === 1) {
-       expr = this;
+       expr = 'this';
        partial = path[0];
     } else {
        expr = path.slice(0, -1).join('.');
