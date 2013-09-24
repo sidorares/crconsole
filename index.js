@@ -30,6 +30,8 @@ ChromeREPL.prototype = {
             writer: self.writer.bind(self)
           });
           self.defineCommands();
+          self.replComplete  = self.repl.complete;
+          self.repl.complete = self.complete.bind(self);
         } else {
           self.repl.displayPrompt();
         }
@@ -37,6 +39,109 @@ ChromeREPL.prototype = {
 
     }.bind(this))
   },
+
+  complete: function (line, callback) {
+    var self = this;
+    // TODO: .tab .switch .exit .help completions (but don't do local context completions)
+    //this.replComplete.call(this.repl, line, function(err, cs) {
+    //    return callback(null, cs);
+    //  if (cs[0].length != 0) // we have repl command completions, don't need to avaluate in browser
+    //     return callback(null, cs);
+      self.chromeCompleter(line, callback);
+    //});
+  },
+
+  injectedCompleterObj: function getCompletions(primitiveType) {
+    var object;
+    if (primitiveType==="string")
+      object = new String("");
+    else if(primitiveType==="number")
+      object = new Number(0);
+    else if(primitiveType==="boolean")
+      object = new Boolean(false);
+    else
+      object=this;
+    var resultSet={};
+    for(var o=object;o;o=o.__proto__)
+    {
+      try {
+        var names=Object.getOwnPropertyNames(o);
+        for(var i=0;i<names.length;++i)
+          resultSet[names[i]]=true;
+      } catch(e) {} 
+    }
+    return resultSet;
+  },
+
+  chromeCompleter: function (line, callback) {
+
+    // TODO: object properties completions only atm
+    // TODO: to add numbers, strings, etc use this evals:
+    // evaluate( '(' + self.injectedCompleterObj.toString() + ')(\"string\");
+    // evaluate( '(' + self.injectedCompleterObj.toString() + ')(\"number\");
+    // evaluate( '(' + self.injectedCompleterObj.toString() + ')(\"boolean"\);
+
+    var self = this;
+
+    var completionsForObj = function(id, callback) {
+      var params = {
+        objectId: id,
+        functionDeclaration: self.injectedCompleterObj.toString(), 
+        doNotPauseOnExceptionsAndMuteConsole: true, 
+        returnByValue: true, 
+        generatePreview:false
+      };
+      self.client.Runtime.callFunctionOn(params, function(err, res) {
+         callback(err, res);
+      });
+    };
+
+    var lastExpr = line.trim().split(/[ {}();\/\\]+/).slice(-1)[0];
+    if (!lastExpr)
+      return callback(null, [[], line]);
+    // TODO obj['longproperyname completer in addition to obj.longproperyname  
+    var path = lastExpr.split('.');
+    var expr, partial;
+    if (path.length === 0) {
+       expr = this;
+       partial = '';
+    } else if (path.length === 1) {
+       expr = this;
+       partial = path[0];
+    } else {
+       expr = path.slice(0, -1).join('.');
+       partial = path[path.length -1];
+    }
+    var lineStart = line.slice(0, lastExpr.length - partial.length);
+    var evalParams = {
+       expression: expr, 
+       objectGroup: "completion",
+       includeCommandLineAPI: true,
+       doNotPauseOnExceptionsAndMuteConsole: true,
+       contextId: self.runtimeContext.id,
+       returnByValue:false, 
+       generatePreview:false
+    }
+    this.client.Runtime.evaluate(evalParams, function(err, res) {
+
+      function done(params) {
+        self.client.Runtime.releaseObjectGroup({"objectGroup":"completion"});
+        callback(null, params);
+      }
+      if (res.wasThrown)
+        return done(null, [[], line]);
+      if (res.result.type === 'object') {
+        completionsForObj(res.result.objectId, function(err, completions) {
+           var allProps = Object.keys(completions.result.value);
+           var completions = allProps
+             .filter(function(c) { return c.indexOf(partial) == 0 })
+             .map(   function(c) { return lineStart + c });
+           done([completions, line]);
+        });
+      }
+    });
+  },
+
   connect: function(options, cb) {
     var self = this;
     self.options = options;
@@ -54,8 +159,14 @@ ChromeREPL.prototype = {
   writer: function(output) {
 
     function propertyValue(t, v) {
-      if (t == 'string')
+      if (t === 'string')
         return util.inspect(v, { colors: true });
+      else if (t === 'number' || t === 'boolean')
+        return v.toString().blue;
+      else if (t === 'object' && v == 'null')
+        return 'null'.blue;
+      else if (t === 'undefined')
+        return 'undefined'.gray;
       return t.grey;
     }
     function propertyPreview(p) {
@@ -64,13 +175,13 @@ ChromeREPL.prototype = {
     function showPreview(obj) {
       return obj.className.yellow + " { " + 
          obj.preview.properties.map(propertyPreview).join(', ') + 
-      "}";
+      " }";
     }
     if (output.wasThrown) {
       return output.result.description.red;
     }
     if (output.result.type == 'undefined')
-      return '';
+      return ''; //return 'undefined'.gray;
 
     if (!output || output.result.type != "object") {
       // let inspect do its thing if it's a literal
@@ -90,7 +201,7 @@ ChromeREPL.prototype = {
     this.repl.displayPrompt();
     this.repl.outputStream.write(str + '\n');
     this.repl.prompt = this.getPrompt();
-    this.repl.displayPrompt();
+    //this.repl.displayPrompt();
     if (cb) cb();
   },
 
@@ -101,12 +212,23 @@ ChromeREPL.prototype = {
     this.client.removeAllListeners(); 
     this.client.on('connect', function() {
       cb();
+      self.client.Runtime.enable();
+      self.client.Runtime.executionContextCreated(function(ctxInfo) {
+        self.runtimeContext = ctxInfo.context
+      });
       self.client.Console.enable();
       function handleMessage(message) {
+        // TODO: handle objects. reuse eval's mirroring
+        //console.log(JSON.stringify(message, null, 4));
+        var stack = message.message.stackTrace;
         if (message.message.level !== 'log')
           return;
         var prefix = "> ".blue;
-        self.writeLn(prefix + message.message.text);
+        var messageText = prefix + message.message.text;
+        //if (stack.length > 1 && stack[1].functionName == 'InjectedScript._evaluateOn')
+        //  self.write('\n' + messageText + '\n');   // assume it's invoked from console - we don't need to scroll screen
+        //else 
+          self.writeLn(messageText); // assume it's from user interaction - insert message above prompt
         self.repl.displayPrompt();
       }
       self.client.Console.messageAdded(function(message) {
