@@ -112,6 +112,17 @@ ChromeREPL.prototype = {
        partial = path[path.length -1];
     }
     var lineStart = line.slice(0, lastExpr.length - partial.length);
+
+    // repl comands, not chrome completion
+    var lineDot = line.split('.');
+    if (lineDot.length > 1 && lineDot[0].trim() === '') {
+      partial = lineDot[1];
+      completions = Object.keys(self.repl.commands)
+        .filter(function(c) { return c.indexOf('.' + partial) == 0 })
+        .map(   function(c) { return lineDot[0] + c });
+      return callback(null, [completions, line]);
+    }
+
     var evalParams = {
        expression: expr, 
        objectGroup: "completion",
@@ -137,6 +148,9 @@ ChromeREPL.prototype = {
              .map(   function(c) { return lineStart + c });
            done([completions, line]);
         });
+      } else {
+        // TODO get completions for String and Number
+        done([[], line]);
       }
     });
   },
