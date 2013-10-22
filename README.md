@@ -34,7 +34,7 @@ There are two extra REPL commands available beyond the standard node.js commands
   - [fxconsole](https://github.com/harthur/fxconsole) - remote Javascript console for Firefox
   - [firefox-client](https://github.com/harthur/firefox-client) - client for [Firefox Remote Debugging Protocol](https://wiki.mozilla.org/Remote_Debugging_Protocol)
   - [chrome-remote-interface](https://github.com/cyrus-and/chrome-remote-interface) - client for [Chrome DevTools Remote Debugging Protocol](https://developers.google.com/chrome-developer-tools/docs/protocol/1.0/), also features simple REPL.
-
+  - [crmux](https://github.com/sidorares/crmux) - multiplex DevTools connections, allows you to connect multiple debugging clients to a single target
 ## Credits
 
  Parts of the code taken from [fxconsole](https://github.com/harthur/fxconsole). Uses [chrome-remote-interface](https://github.com/cyrus-and/chrome-remote-interface) to communicate with Chrome.
