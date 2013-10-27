@@ -74,7 +74,6 @@ ChromeREPL.prototype = {
   },
 
   chromeCompleter: function (line, callback) {
-
     // TODO: object properties completions only atm
     // TODO: to add numbers, strings, etc use this evals:
     // evaluate( '(' + self.injectedCompleterObj.toString() + ')(\"string\");
@@ -225,6 +224,7 @@ ChromeREPL.prototype = {
     this.client.removeAllListeners(); 
     this.client.on('connect', function() {
       cb();
+      self.client.Runtime.disable();
       self.client.Runtime.enable();
       self.client.Runtime.executionContextCreated(function(ctxInfo) {
         self.runtimeContext = ctxInfo.context
@@ -273,7 +273,7 @@ ChromeREPL.prototype = {
   },
 
   evalInTab: function(input, cb) {
-    this.client.Runtime.evaluate({expression: input, generatePreview: true}, function(err, resp) {
+    this.client.Runtime.evaluate({expression: input.slice(1, -2), generatePreview: true}, function(err, resp) {
       return cb(null, resp);
     });
   },
