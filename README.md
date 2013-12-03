@@ -38,3 +38,7 @@ There are two extra REPL commands available beyond the standard node.js commands
 ## Credits
 
  Parts of the code taken from [fxconsole](https://github.com/harthur/fxconsole). Uses [chrome-remote-interface](https://github.com/cyrus-and/chrome-remote-interface) to communicate with Chrome.
+
+
+[![Bitdeli Badge](https://d2weczhvl823v0.cloudfront.net/sidorares/crconsole/trend.png)](https://bitdeli.com/free "Bitdeli Badge")
+
