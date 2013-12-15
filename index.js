@@ -169,6 +169,9 @@ ChromeREPL.prototype = {
   },
 
   writer: function(output) {
+      
+    if (!output)
+      return ''
 
     function propertyValue(t, v) {
       if (t === 'string')
