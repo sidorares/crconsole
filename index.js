@@ -331,7 +331,6 @@ ChromeREPL.prototype = {
 
   addTab: function(url) {
     var self = this;
-    //console.log([url, (url.slice(0,7) != 'http://'), (url.slice(0,8) != 'https://')] );
     if ( (url.slice(0,7) != 'http://') && (url.slice(0,8) != 'https://') ) {
       url = 'http://' + url;
     }
