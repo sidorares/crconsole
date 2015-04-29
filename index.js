@@ -12,7 +12,7 @@ module.exports = ChromeREPL;
 function ChromeREPL() {}
 
 ChromeREPL.prototype = {
-  
+
   start: function(options) {
     this.connect(options, function(err, tab) {
       if (err) throw err;
@@ -29,6 +29,11 @@ ChromeREPL.prototype = {
             output: process.stdout,
             writer: self.writer.bind(self)
           });
+          if (!self.repl.setPrompt) { // assume node pre0.12 or io.js
+            self.repl.setPrompt = function(p) {
+              self.repl.prompt = p;
+            };
+          }
           self.defineCommands();
           self.replComplete  = self.repl.complete;
           self.repl.complete = self.complete.bind(self);
@@ -68,7 +73,7 @@ ChromeREPL.prototype = {
         var names=Object.getOwnPropertyNames(o);
         for(var i=0;i<names.length;++i)
           resultSet[names[i]]=true;
-      } catch(e) {} 
+      } catch(e) {}
     }
     return resultSet;
   },
@@ -85,9 +90,9 @@ ChromeREPL.prototype = {
     var completionsForObj = function(id, callback) {
       var params = {
         objectId: id,
-        functionDeclaration: self.injectedCompleterObj.toString(), 
-        doNotPauseOnExceptionsAndMuteConsole: true, 
-        returnByValue: true, 
+        functionDeclaration: self.injectedCompleterObj.toString(),
+        doNotPauseOnExceptionsAndMuteConsole: true,
+        returnByValue: true,
         generatePreview:false
       };
       self.client.Runtime.callFunctionOn(params, function(err, res) {
@@ -97,7 +102,7 @@ ChromeREPL.prototype = {
     var lastExpr = line.trim().split(/[ {}();\/\\]+/).slice(-1)[0];
     if (!lastExpr)
       return callback(null, [[], line]);
-    // TODO obj['longproperyname completer in addition to obj.longproperyname  
+    // TODO obj['longproperyname completer in addition to obj.longproperyname
     var path = lastExpr.split('.');
     var expr, partial;
     if (path.length === 0) {
@@ -123,12 +128,12 @@ ChromeREPL.prototype = {
     }
 
     var evalParams = {
-       expression: expr, 
+       expression: expr,
        objectGroup: "completion",
        includeCommandLineAPI: true,
        doNotPauseOnExceptionsAndMuteConsole: true,
        contextId: self.runtimeContext.id,
-       returnByValue:false, 
+       returnByValue:false,
        generatePreview:false
     }
     this.client.Runtime.evaluate(evalParams, function(err, res) {
@@ -169,7 +174,6 @@ ChromeREPL.prototype = {
   },
 
   writer: function(output) {
-      
     if (!output)
       return ''
 
@@ -188,15 +192,21 @@ ChromeREPL.prototype = {
       return p.name.magenta + ': ' + propertyValue(p.type, p.value);
     }
     function showPreview(obj) {
-      return obj.className.yellow + " { " + 
-         obj.preview.properties.map(propertyPreview).join(', ') + 
+      if (!obj.preview) {
+        return obj.className.yellow;
+      }
+      return obj.className.yellow + " { " +
+         obj.preview.properties.map(propertyPreview).join(', ') +
       " }";
     }
     if (output.wasThrown) {
       return output.result.description.red;
     }
+    if (output.result.type == 'function') {
+      return '[Function]'.cyan;
+    }
     if (output.result.type == 'undefined')
-      return ''; //return 'undefined'.gray;
+      return 'undefined'.gray;
 
     if (!output || output.result.type != "object") {
       // let inspect do its thing if it's a literal
@@ -210,12 +220,12 @@ ChromeREPL.prototype = {
   write: function(str, cb) {
     this.repl.outputStream.write(str, cb);
   },
-  
+
   writeLn: function(str, cb) {
-    this.repl.prompt = '';
+    this.repl.setPrompt('');
     this.repl.displayPrompt();
     this.repl.outputStream.write(str + '\n');
-    this.repl.prompt = this.getPrompt();
+    this.repl.setPrompt(this.getPrompt());
     //this.repl.displayPrompt();
     if (cb) cb();
   },
@@ -224,7 +234,7 @@ ChromeREPL.prototype = {
     this.tab = tab;
     var self = this;
     this.client.connectToWebSocket(tab.webSocketDebuggerUrl);
-    this.client.removeAllListeners(); 
+    this.client.removeAllListeners();
     this.client.on('connect', function() {
       cb();
       self.client.Runtime.disable();
@@ -243,7 +253,7 @@ ChromeREPL.prototype = {
         var messageText = prefix + message.message.text;
         //if (stack.length > 1 && stack[1].functionName == 'InjectedScript._evaluateOn')
         //  self.write('\n' + messageText + '\n');   // assume it's invoked from console - we don't need to scroll screen
-        //else 
+        //else
           self.writeLn(messageText); // assume it's from user interaction - insert message above prompt
         self.repl.displayPrompt();
       }
@@ -255,8 +265,7 @@ ChromeREPL.prototype = {
       self.client.Console.messageRepeatCountUpdated(function() {
         handleMessage(self.lastMessage);
       });
-      self.repl.prompt = self.getPrompt();
-      self.repl.displayPrompt();
+      self.repl.setPrompt(self.getPrompt());
     });
   },
 
@@ -276,7 +285,14 @@ ChromeREPL.prototype = {
   },
 
   evalInTab: function(input, cb) {
-    this.client.Runtime.evaluate({expression: input.slice(1, -2), generatePreview: true}, function(err, resp) {
+    var removeBrackets = function(input) {
+      // node repl adds () to eval input while iojs not
+      // try to detect here and remove
+      if (input.slice(-2) === '\n)' && input.slice(0,1) == '(')
+        return input.slice(1,-2);
+      return input;
+    };
+    this.client.Runtime.evaluate({expression: removeBrackets(input), generatePreview: true}, function(err, resp) {
       return cb(null, resp);
     });
   },
@@ -317,7 +333,6 @@ ChromeREPL.prototype = {
 
       if (!tab) {
         this.write("no tab at index " + index + "\n");
-        this.repl.displayPrompt();
       }
       else {
         self.setTab(tab, function() {
