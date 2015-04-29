@@ -311,17 +311,38 @@ ChromeREPL.prototype = {
     this.repl.defineCommand('tabs', {
       help: 'list currently open tabs',
       action: this.listTabs.bind(this)
-    })
+    });
 
     this.repl.defineCommand('quit', {
       help: 'quit crconsole',
       action: this.quit
-    })
+    });
 
     this.repl.defineCommand('switch', {
       help: 'switch to evaluating in another tab by index',
       action: this.switchTab.bind(this)
-    })
+    });
+
+    this.repl.defineCommand('open', {
+      help: 'open new tab',
+      action: this.addTab.bind(this)
+    });
+  },
+
+  addTab: function(url) {
+    var self = this;
+    //console.log([url, (url.slice(0,7) != 'http://'), (url.slice(0,8) != 'https://')] );
+    if ( (url.slice(0,7) != 'http://') && (url.slice(0,8) != 'https://') ) {
+      url = 'http://' + url;
+    }
+    this.client.openTab(this.options.host, this.options.port, url, function(err, tab) {
+      if (err) throw err;
+      self.setTab(tab, function() {
+        self.write((self.tab.url + "\n").yellow);
+        self.repl.setPrompt(self.tab.url + '>');
+        self.repl.displayPrompt();
+      });
+    });
   },
 
   switchTab: function(index) {
@@ -337,6 +358,7 @@ ChromeREPL.prototype = {
       else {
         self.setTab(tab, function() {
           self.write((self.tab.url + "\n").yellow);
+          self.repl.displayPrompt();
         });
       }
 
