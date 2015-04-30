@@ -247,9 +247,18 @@ ChromeREPL.prototype = {
         // TODO: handle objects. reuse eval's mirroring
         //console.log(JSON.stringify(message, null, 4));
         var stack = message.message.stackTrace;
-        if (message.message.level !== 'log')
+        /* if (message.message.level !== 'log')
           return;
-        var prefix = "> ".blue;
+        var prefix = "> ".blue; */
+        var messageLevel = message.message.level;
+        var prefix = '> ';
+        if (messageLevel === 'info') {
+          prefix = prefix.blue;
+        } else if (messageLevel === 'warn') {
+          prefix = prefix.yellow;
+        } else if (messageLevel === 'error') {
+          prefix = prefix.red;
+        }
         var messageText = prefix + message.message.text;
         //if (stack.length > 1 && stack[1].functionName == 'InjectedScript._evaluateOn')
         //  self.write('\n' + messageText + '\n');   // assume it's invoked from console - we don't need to scroll screen
