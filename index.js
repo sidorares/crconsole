@@ -5,6 +5,22 @@ var util = require("util"),
     colors = require("colors"),
     chrome = require("chrome-remote-interface");
 
+var cardinal = require('cardinal');
+var resolveCardinalTheme = require('cardinal/settings').resolveTheme;
+
+/*
+var highlightJs = function(src) {
+  debugger;
+  var t = resolveCardinalTheme()
+  debugger;
+  return cardinal.highlight(src);
+}
+debugger;
+var cc = highlightJs('var a = 10');
+console.log(cc);
+
+process.exit(0);
+*/
 const PROP_SHOW_COUNT = 5;
 
 module.exports = ChromeREPL;
@@ -242,6 +258,7 @@ ChromeREPL.prototype = {
       self.client.Runtime.executionContextCreated(function(ctxInfo) {
         self.runtimeContext = ctxInfo.context
       });
+      self.client.Debugger.enable();
       self.client.Console.enable();
       function handleMessage(message) {
         // TODO: handle objects. reuse eval's mirroring
@@ -275,6 +292,82 @@ ChromeREPL.prototype = {
         handleMessage(self.lastMessage);
       });
       self.repl.setPrompt(self.getPrompt());
+
+      self.client.Debugger.paused(function(params) {
+
+        var NUM_LINES = 5;
+        function pad(maxLine, breakLine, num) {
+          var spaces = '                       ';
+          var w = String(maxLine).length;
+          var n = String(num);
+          n = spaces.slice(0, w - n.length) + n;
+          if (num == breakLine) {
+            n = '> ' + n + ' ';
+          } else {
+            n = '  ' + n + ' ';
+          }
+          return n;
+        }
+
+         //self.client.Page.setOverlayMessage({
+         //  message: 'paused in crconsole'
+         //});
+         self.client.send('Page.setOverlayMessage', {message: 'paused in crconsole'});
+         //console.log('paused!!!');
+         //console.log(params.callFrames);
+         var frame = params.callFrames[0];
+         //console.log(frame);
+         var lineNumber = frame.location.lineNumber;
+         var columnNumber = frame.location.columnNumber;
+         self.client.Debugger.getScriptSource({ scriptId: frame.location.scriptId }, function(err, resp) {
+           //console.log('script:', resp);
+           //console.log(frame);
+           self.writeLn('break in ' + [lineNumber, columnNumber].join(':'))
+           var startLine = lineNumber - NUM_LINES;
+           var lastLine = lineNumber + NUM_LINES;
+           var out = [];
+           var src = cardinal.highlight(resp.scriptSource, {
+             theme: resolveCardinalTheme()
+             //linenos: false
+           }).split('\n');
+           for (var i=startLine; i < lastLine; ++i) {
+             var prefix = pad(lastLine, lineNumber, i);
+             if (src[i])
+               out.push(prefix + src[i]);
+           }
+           self.writeLn(out.join('\n'));
+           // TODO mark current column with underline?
+           //self.writeLn(src[lineNumber].underline);
+           self.repl.setPrompt('[=] @ ' + frame.functionName + ' >');
+           self.repl.displayPrompt();
+         });
+      });
+
+      self.client.Debugger.resumed(function(params) {
+        self.client.send('Page.setOverlayMessage', {});
+        self.repl.setPrompt(self.getPrompt());
+        self.repl.displayPrompt();
+      });
+
+      //self.client.CSS.enable();
+      //self.client.CSS.getAllStyleSheets(function() {
+      //  console.log('getAllStyleSheets');
+      //  console.log(arguments);
+      //});
+
+      //self.client.CSS.styleSheetAdded(function() {
+      //  console.log('css added');
+      //  console.log(arguments);
+      //});
+      //self.client.CSS.styleSheetRemoved(function() {
+      //  console.log('css removed');
+      //  console.log(arguments);
+      //});
+      //self.client.CSS.styleSheetChanged(function() {
+      //  console.log('css changed');
+      //  console.log(arguments);
+      //});
+
     });
   },
 
@@ -317,6 +410,9 @@ ChromeREPL.prototype = {
   },
 
   defineCommands: function() {
+
+    var self = this;
+
     this.repl.defineCommand('tabs', {
       help: 'list currently open tabs',
       action: this.listTabs.bind(this)
@@ -336,6 +432,35 @@ ChromeREPL.prototype = {
       help: 'open new tab',
       action: this.addTab.bind(this)
     });
+
+    this.repl.defineCommand('s', {
+      help: 'step into',
+      action: function() {
+        self.client.Debugger.stepInto();
+      }
+    });
+
+    this.repl.defineCommand('n', {
+      help: 'step next',
+      action: function() {
+        self.client.Debugger.stepOver();
+      }
+    });
+
+    this.repl.defineCommand('o', {
+      help: 'step out',
+      action: function() {
+        self.client.Debugger.stepOut();
+      }
+    });
+
+    this.repl.defineCommand('c', {
+      help: 'continue',
+      action: function() {
+        self.client.Debugger.resume();
+      }
+    });
+
   },
 
   addTab: function(url) {
