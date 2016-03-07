@@ -440,6 +440,50 @@ ChromeREPL.prototype = {
       }
     });
 
+    this.repl.defineCommand('screen', {
+      help: 'show screenshot',
+      action: function(scaleStr) {
+        var scale = parseFloat(scaleStr);
+        if (!scale)
+          scale = 0.5;
+        var dimensions = "(function() { var body = document.body; var html = document.documentElement;"
+        dimensions += "var width = Math.max( body.scrollWidth, body.offsetWidth,"
+        dimensions += "html.clientWidth, html.scrollWidth, html.offsetWidth ); return width;})()";
+        self.client.Runtime.evaluate({ expression: dimensions }, function(err, res) {
+          var width = res.result.value * scale;
+          self.client.Page.captureScreenshot(function(err, res) {
+            var data = res.data;
+            //var control = '\033]1337;File=;inline=1;width=' + width + 'px:' + data + '\07';
+            var control = '\033]1337;File=test;inline=1:' + data + '\07';
+            self.writeLn(control);
+          });
+        });
+      }
+    });
+
+    /*
+    this.repl.defineCommand('record', {
+      help: 'start screencast',
+      action: function() {
+        self.client.send('Page.startScreencast',
+        //self.client.Page.startScreencast({
+        {
+          format: 'jpeg',
+          quelity: 10
+        })
+        self.client.on('Page.screencastFrame', function(params) {
+          var data = params.data;
+          var width = params.metadata.deviceWidth / 4;
+          var control = '\033]1337;File=;inline=1;width=' + width + 'px:' + data + '\07';
+          self.writeLn(control);
+          self.client.send('Page.screencastFrameAck', {
+            sessionId: params.sessionId
+          });
+        });
+      }
+    });
+    */
+
     this.repl.defineCommand('n', {
       help: 'step next',
       action: function() {
