@@ -260,6 +260,8 @@ ChromeREPL.prototype = {
       });
       self.client.Debugger.enable();
       self.client.Console.enable();
+      self.client.send('DOM.enable');
+
       function handleMessage(message) {
         // TODO: handle objects. reuse eval's mirroring
         //console.log(JSON.stringify(message, null, 4));
@@ -292,6 +294,18 @@ ChromeREPL.prototype = {
         handleMessage(self.lastMessage);
       });
       self.repl.setPrompt(self.getPrompt());
+
+      //self.client.on('DOM.nodeHighlightRequested', function(node) {
+      self.client.on('DOM.inspectNodeRequested', function(node) {
+        self.client.send('DOM.pushNodesByBackendIdsToFrontend', { backendNodeIds: [node.backendNodeId]}, function(err, nodes) {
+          var nodeId = nodes.nodeIds[0];
+          self.client.send('DOM.getOuterHTML', { nodeId: nodeId }, function(err, res) {
+            // TODO: highlight html
+            self.writeLn(res.outerHTML);
+            self.client.send('DOM.setInspectMode', { mode: 'none' });
+          });
+        });
+      });
 
       self.client.Debugger.paused(function(params) {
 
@@ -461,7 +475,37 @@ ChromeREPL.prototype = {
       }
     });
 
+    this.repl.defineCommand('inspect', {
+      help: 'set inspect mode',
+      action: function(mode) {
+        if (!mode) {
+          //self.writeLn('need one of [searchForNode, searchForUAShadowDOM, showLayoutEditor, none] as argument');
+          //return;
+          mode = 'searchForNode';
+        }
+        // TODO: paddingColor, margin color etc
+        // see https://chromedevtools.github.io/debugger-protocol-viewer/DOM/#type-HighlightConfig
+        self.client.send('DOM.setInspectMode', {
+          mode: mode,
+          highlightConfig: {
+            showInfo: true,
+            showRulers: true,
+            contentColor: {
+              r: 100,
+              g: 20,
+              b: 20,
+              a: 0.1
+            }
+          }
+        });
+      }
+    });
+
     /*
+
+    // WIP: allow to record to gif?
+    // see https://github.com/sidorares/rfbrecord
+
     this.repl.defineCommand('record', {
       help: 'start screencast',
       action: function() {
