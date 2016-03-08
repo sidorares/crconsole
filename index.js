@@ -307,9 +307,27 @@ ChromeREPL.prototype = {
         });
       });
 
-      self.client.Debugger.paused(function(params) {
+      self.displayBacktrace = function() {
+        var pad = function () {
+          if (i > 99) return '';
+          if (9 > 9) return ' ';
+          return '   ';
+        }
 
-        self._breakFrames = params.callFrames;
+        var frames = "";
+        var f;
+        for (var i=0; i < self._breakFrames.length; ++i) {
+          f = self._breakFrames[i]
+          var s = self._scripts[f.location.scriptId];
+          var loc = ':' + f.location.lineNumber + ':' + f.location.columnNumber;
+          var title = s.url ? s.url : '<script ' + f.location.scriptId + '>';
+          var cur = i == self._breakFrameId ? '>' : ' ';
+          frames += cur + pad(i) + i + ' ' + title + loc + ' ' + f.this.className + '.' + f.functionName + '\n'
+        }
+        self.writeLn(frames);
+      }
+
+      self.displaySource = function() {
         var NUM_LINES = 5;
         function pad(maxLine, breakLine, num) {
           var spaces = '                       ';
@@ -324,8 +342,7 @@ ChromeREPL.prototype = {
           return n;
         }
 
-        self.client.send('Page.setOverlayMessage', {message: 'paused in crconsole'});
-        var frame = params.callFrames[0];
+        var frame = self._breakFrames[self._breakFrameId];
         var lineNumber   = frame.location.lineNumber;
         var columnNumber = frame.location.columnNumber;
         self.client.Debugger.getScriptSource({ scriptId: frame.location.scriptId }, function(err, resp) {
@@ -344,9 +361,16 @@ ChromeREPL.prototype = {
           self.writeLn(out.join('\n'));
           // TODO mark current column with underline?
           //self.writeLn(src[lineNumber].underline);
-          self.repl.setPrompt('[=] @ ' + frame.functionName + ' > ');
+          self.repl.setPrompt(frame.this.className + '.' + frame.functionName + '() > ');
           self.repl.displayPrompt();
         });
+      }
+
+      self.client.Debugger.paused(function(params) {
+        self._breakFrameId = 0;
+        self._breakFrames = params.callFrames;
+        self.client.send('Page.setOverlayMessage', {message: 'paused in crconsole'});
+        self.displaySource();
       });
 
       self.client.Debugger.resumed(function(params) {
@@ -406,7 +430,13 @@ ChromeREPL.prototype = {
         return cb(null, resp);
       });
     } else {
-      console.log('We are in debugger!!!');
+      var frame = self._breakFrames[self._breakFrameId];
+      this.client.Debugger.evaluateOnCallFrame({
+        callFrameId: frame.callFrameId,
+        expression: removeBrackets(input)
+      }, function(err, resp) {
+        return cb(null, resp);
+      });
     }
   },
 
@@ -451,27 +481,51 @@ ChromeREPL.prototype = {
       }
     });
 
-    function displayBacktrace() {
-      //console.log(self._scripts);
-      //console.log(self._breakFrames);
-      var frames = "";
-      var f;
-      for (var i=0; i < self._breakFrames.length; ++i) {
-        f = self._breakFrames[i]
-        var s = self._scripts[f.location.scriptId];
-        frames += i + ') ' + s.url + ' ' + f.this.className + '.' + f.functionName + ' '
-          + f.location.lineNumber + ':' + f.location.columnNumber + '\n'
-      }
-      self.writeLn(frames);
-    }
-
     this.repl.defineCommand('bt', {
       help: 'back trace',
       action: function() {
         if (!self._breakFrames) {
           self.writeLn('Can\'t show backtrace: not stopped in debugger.');
         } else {
-          displayBacktrace();
+          self.displayBacktrace();
+        }
+      }
+    });
+
+    this.repl.defineCommand('up', {
+      help: 'move up one or more frames',
+      action: function(n) {
+        if (n)
+          n = parseInt(n);
+        else
+          n = 1;
+        if (!self._breakFrames) {
+          self.writeLn('Can\'t show backtrace: not stopped in debugger.');
+        } else {
+          self._breakFrameId += n
+          if (self._breakFrameId >= self._breakFrames.length)
+            self._breakFrameId = self._breakFrames.length - 1;
+          self.displayBacktrace();
+          self.displaySource()
+        }
+      }
+    });
+
+    this.repl.defineCommand('down', {
+      help: 'move down one or more frames',
+      action: function(n) {
+        if (n)
+          n = parseInt(n);
+        else
+          n = 1;
+        if (!self._breakFrames) {
+          self.writeLn('Can\'t show backtrace: not stopped in debugger.');
+        } else {
+          self._breakFrameId -= n
+          if (self._breakFrameId < 0)
+            self._breakFrameId = 0;
+          self.displayBacktrace();
+          self.displaySource()
         }
       }
     });
@@ -486,7 +540,6 @@ ChromeREPL.prototype = {
         dimensions += "var width = Math.max( body.scrollWidth, body.offsetWidth,"
         dimensions += "html.clientWidth, html.scrollWidth, html.offsetWidth ); return width;})()";
         self.client.Runtime.evaluate({ expression: dimensions }, function(err, res) {
-          console.log(err, res);
           var width = res.result.value * scale;
           self.client.Page.captureScreenshot(function(err, res) {
             var data = res.data;
