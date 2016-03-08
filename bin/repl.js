@@ -9,7 +9,12 @@ program
   .option('-a, --host <host>', 'developer tools host address [localhost]', String, 'localhost')
   .option('-s, --start', 'start chrome auromatically and wait for debugger', Boolean, false)
   .option('-c, --canary', 'prefer canary over stable chrome', Boolean, false)
+  .option('-w, --websocket <url>', 'connect to websocket url instead of first tab in the list', String)
   .parse(process.argv);
+
+
+console.log('======', program.websocket);
+console.log(program);
 
 var repl = new ChromeREPL();
 

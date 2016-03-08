@@ -8,19 +8,6 @@ var util = require("util"),
 var cardinal = require('cardinal');
 var resolveCardinalTheme = require('cardinal/settings').resolveTheme;
 
-/*
-var highlightJs = function(src) {
-  debugger;
-  var t = resolveCardinalTheme()
-  debugger;
-  return cardinal.highlight(src);
-}
-debugger;
-var cc = highlightJs('var a = 10');
-console.log(cc);
-
-process.exit(0);
-*/
 const PROP_SHOW_COUNT = 5;
 
 module.exports = ChromeREPL;
@@ -34,7 +21,7 @@ ChromeREPL.prototype = {
       if (err) throw err;
       var self = this;
 
-      console.log(tab.url.yellow);
+      console.log(tab.url.yellow)
 
       this.setTab(tab, function() {
         if (!self.repl) {
@@ -183,10 +170,17 @@ ChromeREPL.prototype = {
       console.log(error);
     });
     self.client = client;
-    client.listTabs(options.host, options.port, function(err, tabs) {
-      if(err) return cb(err);
-      cb(null, tabs[0]);
-    });
+    if (options.websocket) {
+      return cb(null, {
+        url: '',
+        webSocketDebuggerUrl: options.websocket
+      });
+    } else {
+      client.listTabs(options.host, options.port, function(err, tabs) {
+        if(err) return cb(err);
+        cb(null, tabs[0]);
+      });
+    }
   },
 
   writer: function(output) {
@@ -253,6 +247,7 @@ ChromeREPL.prototype = {
     this.client.removeAllListeners();
     this.client.on('connect', function() {
       cb();
+      self._scripts = {};
       self.client.Runtime.disable();
       self.client.Runtime.enable();
       self.client.Runtime.executionContextCreated(function(ctxInfo) {
@@ -261,6 +256,9 @@ ChromeREPL.prototype = {
       self.client.Debugger.enable();
       self.client.Console.enable();
       self.client.send('DOM.enable');
+      self.client.Debugger.scriptParsed(function(script) {
+        self._scripts[script.scriptId] = script;
+      })
 
       function handleMessage(message) {
         // TODO: handle objects. reuse eval's mirroring
@@ -285,17 +283,19 @@ ChromeREPL.prototype = {
           self.writeLn(messageText); // assume it's from user interaction - insert message above prompt
         self.repl.displayPrompt();
       }
+
       self.client.Console.messageAdded(function(message) {
         self.lastMessage = message;
         handleMessage(message);
       });
+
       // TODO: implement counter. Meanwhile, just repeat last message
       self.client.Console.messageRepeatCountUpdated(function() {
         handleMessage(self.lastMessage);
       });
       self.repl.setPrompt(self.getPrompt());
 
-      //self.client.on('DOM.nodeHighlightRequested', function(node) {
+      // TODO: move to lib/dom.js
       self.client.on('DOM.inspectNodeRequested', function(node) {
         self.client.send('DOM.pushNodesByBackendIdsToFrontend', { backendNodeIds: [node.backendNodeId]}, function(err, nodes) {
           var nodeId = nodes.nodeIds[0];
@@ -309,6 +309,7 @@ ChromeREPL.prototype = {
 
       self.client.Debugger.paused(function(params) {
 
+        self._breakFrames = params.callFrames;
         var NUM_LINES = 5;
         function pad(maxLine, breakLine, num) {
           var spaces = '                       ';
@@ -323,38 +324,29 @@ ChromeREPL.prototype = {
           return n;
         }
 
-         //self.client.Page.setOverlayMessage({
-         //  message: 'paused in crconsole'
-         //});
-         self.client.send('Page.setOverlayMessage', {message: 'paused in crconsole'});
-         //console.log('paused!!!');
-         //console.log(params.callFrames);
-         var frame = params.callFrames[0];
-         //console.log(frame);
-         var lineNumber = frame.location.lineNumber;
-         var columnNumber = frame.location.columnNumber;
-         self.client.Debugger.getScriptSource({ scriptId: frame.location.scriptId }, function(err, resp) {
-           //console.log('script:', resp);
-           //console.log(frame);
-           self.writeLn('break in ' + [lineNumber, columnNumber].join(':'))
-           var startLine = lineNumber - NUM_LINES;
-           var lastLine = lineNumber + NUM_LINES;
-           var out = [];
-           var src = cardinal.highlight(resp.scriptSource, {
-             theme: resolveCardinalTheme()
-             //linenos: false
-           }).split('\n');
-           for (var i=startLine; i < lastLine; ++i) {
-             var prefix = pad(lastLine, lineNumber, i);
-             if (src[i])
-               out.push(prefix + src[i]);
-           }
-           self.writeLn(out.join('\n'));
-           // TODO mark current column with underline?
-           //self.writeLn(src[lineNumber].underline);
-           self.repl.setPrompt('[=] @ ' + frame.functionName + ' >');
-           self.repl.displayPrompt();
-         });
+        self.client.send('Page.setOverlayMessage', {message: 'paused in crconsole'});
+        var frame = params.callFrames[0];
+        var lineNumber   = frame.location.lineNumber;
+        var columnNumber = frame.location.columnNumber;
+        self.client.Debugger.getScriptSource({ scriptId: frame.location.scriptId }, function(err, resp) {
+          self.writeLn('break in ' + [lineNumber, columnNumber].join(':'))
+          var startLine = lineNumber - NUM_LINES;
+          var lastLine  = lineNumber + NUM_LINES;
+          var out = [];
+          var src = cardinal.highlight(resp.scriptSource, {
+            theme: resolveCardinalTheme()
+          }).split('\n');
+          for (var i=startLine; i < lastLine; ++i) {
+          var prefix = pad(lastLine, lineNumber, i);
+          if (src[i])
+            out.push(prefix + src[i]);
+          }
+          self.writeLn(out.join('\n'));
+          // TODO mark current column with underline?
+          //self.writeLn(src[lineNumber].underline);
+          self.repl.setPrompt('[=] @ ' + frame.functionName + ' > ');
+          self.repl.displayPrompt();
+        });
       });
 
       self.client.Debugger.resumed(function(params) {
@@ -408,9 +400,14 @@ ChromeREPL.prototype = {
         return input.slice(1,-2);
       return input;
     };
-    this.client.Runtime.evaluate({expression: removeBrackets(input), generatePreview: true}, function(err, resp) {
-      return cb(null, resp);
-    });
+    var self = this;
+    if (!self._breakFrames) {
+      this.client.Runtime.evaluate({expression: removeBrackets(input), generatePreview: true}, function(err, resp) {
+        return cb(null, resp);
+      });
+    } else {
+      console.log('We are in debugger!!!');
+    }
   },
 
   transformResult: function(result) {
@@ -454,6 +451,31 @@ ChromeREPL.prototype = {
       }
     });
 
+    function displayBacktrace() {
+      //console.log(self._scripts);
+      //console.log(self._breakFrames);
+      var frames = "";
+      var f;
+      for (var i=0; i < self._breakFrames.length; ++i) {
+        f = self._breakFrames[i]
+        var s = self._scripts[f.location.scriptId];
+        frames += i + ') ' + s.url + ' ' + f.this.className + '.' + f.functionName + ' '
+          + f.location.lineNumber + ':' + f.location.columnNumber + '\n'
+      }
+      self.writeLn(frames);
+    }
+
+    this.repl.defineCommand('bt', {
+      help: 'back trace',
+      action: function() {
+        if (!self._breakFrames) {
+          self.writeLn('Can\'t show backtrace: not stopped in debugger.');
+        } else {
+          displayBacktrace();
+        }
+      }
+    });
+
     this.repl.defineCommand('screen', {
       help: 'show screenshot',
       action: function(scaleStr) {
@@ -464,6 +486,7 @@ ChromeREPL.prototype = {
         dimensions += "var width = Math.max( body.scrollWidth, body.offsetWidth,"
         dimensions += "html.clientWidth, html.scrollWidth, html.offsetWidth ); return width;})()";
         self.client.Runtime.evaluate({ expression: dimensions }, function(err, res) {
+          console.log(err, res);
           var width = res.result.value * scale;
           self.client.Page.captureScreenshot(function(err, res) {
             var data = res.data;
