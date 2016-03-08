@@ -13,9 +13,6 @@ program
   .parse(process.argv);
 
 
-console.log('======', program.websocket);
-console.log(program);
-
 var repl = new ChromeREPL();
 
 if (program.start) {
