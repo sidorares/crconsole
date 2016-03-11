@@ -5,6 +5,7 @@ var util = require("util"),
     colors = require("colors"),
     chrome = require("chrome-remote-interface");
 
+var cdir = require('./lib/cdir.js');
 var cardinal = require('cardinal');
 var resolveCardinalTheme = require('cardinal/settings').resolveTheme;
 
@@ -284,6 +285,29 @@ ChromeREPL.prototype = {
         self.repl.displayPrompt();
       }
 
+      self._http_requests = {};
+      self.client.Network.enable();
+      self.client.Network.requestWillBeSent(function(r) {
+        //console.log(r);
+        //console.log(self._http_requests);
+        var saved = self._http_requests[r.requestId];
+        if (!saved) {
+          saved = {};
+          self._http_requests[r.requestId] = saved;
+        }
+        saved.request = r;
+      });
+      self.client.Network.responseReceived(function(r) {
+        //console.log(r);
+        //console.log(self._http_requests);
+        var saved = self._http_requests[r.requestId];
+        if (!saved) {
+          saved = {};
+          self._http_requests[r.requestId] = saved;
+        }
+        saved.response = r;
+      });
+
       self.client.Console.messageAdded(function(message) {
         self.lastMessage = message;
         handleMessage(message);
@@ -427,7 +451,10 @@ ChromeREPL.prototype = {
     var self = this;
     if (!self._breakFrames) {
       this.client.Runtime.evaluate({expression: removeBrackets(input), generatePreview: true}, function(err, resp) {
-        return cb(null, resp);
+        //cdir(resp, { cb: function() {
+        //  cb(null, resp);
+        //}});
+        //return cb(null, resp);
       });
     } else {
       var frame = self._breakFrames[self._breakFrameId];
@@ -525,7 +552,7 @@ ChromeREPL.prototype = {
           if (self._breakFrameId < 0)
             self._breakFrameId = 0;
           self.displayBacktrace();
-          self.displaySource()
+          self.displaySource();
         }
       }
     });
@@ -542,9 +569,10 @@ ChromeREPL.prototype = {
         self.client.Runtime.evaluate({ expression: dimensions }, function(err, res) {
           var width = res.result.value * scale;
           self.client.Page.captureScreenshot(function(err, res) {
+            console.log(res);
             var data = res.data;
-            //var control = '\033]1337;File=;inline=1;width=' + width + 'px:' + data + '\07';
-            var control = '\033]1337;File=test;inline=1:' + data + '\07';
+            var control = '\033]1337;File=;inline=1;width=' + width + 'px:' + data + '\07';
+            //var control = '\033]1337;File=test;inline=1:' + data + '\07';
             self.writeLn(control);
           });
         });
@@ -625,6 +653,73 @@ ChromeREPL.prototype = {
       }
     });
 
+    this.repl.defineCommand('net', {
+      help: 'network',
+      action: function(cmd) {
+        if (cmd.indexOf('list') === 0) {
+          var results = '';
+          var ids = Object.keys(self._http_requests);
+          var data = ids.map( function(reqId) {
+            var obj = self._http_requests[reqId];
+            if (!obj.request) return; // request was sent before crconsole connected to browser, ignore this for now
+            var req = obj.request.request;
+            var resp = obj.response ? obj.response.response : undefined;
+            results += ' ' + reqId + '> '  +  req.method + ' ' + req.url + ' -> ';
+            if (!resp) {
+              results += ' [pending]\n';
+            } else {
+              results += resp.status + '/' + resp.statusText + ' ' + resp.mimeType + ' ' + obj.response.type + '\n';
+            }
+            return 0;
+          })
+          self.writeLn(results, function() {
+            self.repl.displayPrompt();
+          });
+        } else if (cmd.indexOf('show') === 0) {
+          var parts = cmd.split(/[ \t]+/);
+          var id = parts[1];
+          var obj = self._http_requests[id];
+          if (!obj) {
+            self.writeLn('Not found: ' + id);
+            return;
+          }
+          self.client.Network.getResponseBody({requestId: id}, function(err, res) {
+            if (obj.response.response.mimeType == 'application/json') {
+              try {
+                self.writeLn(util.inspect(JSON.parse(res.body), { colors: true }));
+              } catch(e) {
+                self.writeLn('Invalid JSON, displaying raw content: \n' + res.body);
+              }
+            } else {
+              var control = '\033]1337;File=test;inline=1:' + res.body + '\07'
+              self.writeLn(control);
+            }
+          })
+        } else if (cmd.indexOf('request') === 0) {
+          var parts = cmd.split(/[ \t]+/);
+          var id = parts[1];
+          var obj = self._http_requests[id];
+          if (!obj) {
+            self.writeLn('Not found: ' + id);
+            return;
+          }
+          cdir(obj.request, { cb: function() {
+             self.repl.displayPrompt();
+          }});
+        } else if (cmd.indexOf('response') === 0) {
+          var parts = cmd.split(/[ \t]+/);
+          var id = parts[1];
+          var obj = self._http_requests[id];
+          if (!obj) {
+            self.writeLn('Not found: ' + id);
+            return;
+          }
+          cdir(obj.response, { cb: function() {
+             self.repl.displayPrompt();
+          }});
+        }
+      }
+    });
   },
 
   addTab: function(url) {
