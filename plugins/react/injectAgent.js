@@ -1,3 +1,7 @@
+// most of the code extracted from https://github.com/facebook/react-devtools/blob/master/agent/Agent.js
+// - Copyright (c) 2015-present, Facebook, Inc.
+// BSD license
+
 module.exports = function injectAgent(hook) {
 
   var assign = Object.assign;
@@ -116,6 +120,23 @@ module.exports = function injectAgent(hook) {
       rs.push(this._subTree(root));
     }
     return JSON.stringify(rs);
+  }
+
+  AP.getIDForNode = function(node) {
+    if (!this.reactInternals) {
+      return null;
+    }
+    var component;
+    for (var renderer in this.reactInternals) {
+      // If a renderer doesn't know about a reactId, it will throw an error.¬
+      try {
+        // $FlowFixMe possibly null - it's not null¬
+        component = this.reactInternals[renderer].getReactElementFromNative(node);
+      } catch (e) {}
+      if (component) {
+        return this.getId(component);
+      }
+    }
   }
 
   function getIn(base, path) {

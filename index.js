@@ -333,7 +333,7 @@ ChromeREPL.prototype = {
           var nodeId = nodes.nodeIds[0];
           // TODO: replace with event emitter
           if (self.onNodeSelected)
-            self.onNodeSelected(nodeId)
+            self.onNodeSelected(nodeId, node.backendNodeId)
         });
       });
 
@@ -641,35 +641,44 @@ ChromeREPL.prototype = {
       }
     });
 
+    self._startInspect = function(mode) {
+      if (!mode) {
+        //self.writeLn('need one of [searchForNode, searchForUAShadowDOM, showLayoutEditor, none] as argument');
+        //return;
+        mode = 'searchForNode';
+      }
+      // TODO: paddingColor, margin color etc
+      // see https://chromedevtools.github.io/debugger-protocol-viewer/DOM/#type-HighlightConfig
+      self.client.send('DOM.setInspectMode', {
+        mode: mode,
+        highlightConfig: {
+          showInfo: true,
+          showRulers: true,
+          contentColor: {
+            r: 100,
+            g: 20,
+            b: 20,
+            a: 0.1
+          }
+        }
+      });
+    }
+
+    self._stopInspect = function(mode) {
+      self.client.send('DOM.setInspectMode', { mode: 'none' });
+    }
+
     this.repl.defineCommand('inspect', {
       help: 'set inspect mode',
       action: function(mode) {
-        if (!mode) {
-          //self.writeLn('need one of [searchForNode, searchForUAShadowDOM, showLayoutEditor, none] as argument');
-          //return;
-          mode = 'searchForNode';
-        }
-        // TODO: paddingColor, margin color etc
-        // see https://chromedevtools.github.io/debugger-protocol-viewer/DOM/#type-HighlightConfig
-        self.client.send('DOM.setInspectMode', {
-          mode: mode,
-          highlightConfig: {
-            showInfo: true,
-            showRulers: true,
-            contentColor: {
-              r: 100,
-              g: 20,
-              b: 20,
-              a: 0.1
-            }
-          }
-        });
+        self._startInspect();
         self.onNodeSelected = function(nodeId) {
           self.writeLn('select node to see inner html');
           self.client.send('DOM.getOuterHTML', { nodeId: nodeId }, function(err, res) {
             // TODO: highlight html
+            self._stopInspect();
+            self.client.send('DOM.setInspectedNode', { nodeId: nodeId});
             self.writeLn(res.outerHTML);
-            self.client.send('DOM.setInspectMode', { mode: 'none' });
             self.onNodeSelected = null;
             self.repl.displayPrompt();
           });
@@ -785,7 +794,7 @@ ChromeREPL.prototype = {
     })
 
 
-    this.repl.defineCommand('react', function() {
+    this.repl.defineCommand('react', function(command) {
       function getAgent(cb) {
         if (!self._reactAgent) {
           react(self.client, self.repl, function(err, agentId) {
@@ -795,6 +804,44 @@ ChromeREPL.prototype = {
         } else {
           cb(null, self._reactAgent);
         }
+      }
+
+      if (command == 'inspect') {
+        self._startInspect();
+        self.onNodeSelected = function(nodeId) {
+          getAgent(function(err, agentId) {
+            // agent -> get element for node
+            // print node
+            // set window.$r to point to node
+            self.client.send('DOM.resolveNode', { nodeId: nodeId}, function(err, res) {
+              self._stopInspect();
+              var params = {
+                objectId: agentId,
+                arguments: [{objectId: agentId}, {objectId: res.object.objectId}],
+                functionDeclaration: `function(agent, node) {
+                  var id = agent.getIDForNode(node);
+                  var data = agent.elementData.get(id);
+                  if (data && data.publicInstance) {
+                    window.rrr = data.publicInstance;
+                  }
+                  console.log(window.rrr);
+                  console.log(id)
+                  console.log(data)
+                  return JSON.stringify(agent._subTree(data));
+                }
+                `,
+                doNotPauseOnExceptionsAndMuteConsole: true,
+                returnByValue: true,
+                generatePreview:false
+              };
+              self.client.Runtime.callFunctionOn(params, function(err, res) {
+                console.log(err, res);
+              });
+
+            });
+          });
+        }
+        return;
       }
 
       getAgent(function(err, agentId) {
@@ -813,7 +860,7 @@ ChromeREPL.prototype = {
             self.repl.displayPrompt();
           }});
         });
-      })
+      });
     });
 
     this.repl.defineCommand('net', {
