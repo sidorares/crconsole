@@ -8,6 +8,9 @@ var util = require("util"),
 var cdir = require('./lib/cdir.js');
 var cardinal = require('cardinal');
 var resolveCardinalTheme = require('cardinal/settings').resolveTheme;
+var EventEmitter = require('events');
+
+var react = require('./plugins/react');
 
 const PROP_SHOW_COUNT = 5;
 
@@ -21,8 +24,6 @@ ChromeREPL.prototype = {
     this.connect(options, function(err, tab) {
       if (err) throw err;
       var self = this;
-
-      console.log(tab.url.yellow)
 
       this.setTab(tab, function() {
         if (!self.repl) {
@@ -132,22 +133,22 @@ ChromeREPL.prototype = {
     }
 
     var evalParams = {
-       expression: expr,
-       objectGroup: "completion",
-       includeCommandLineAPI: true,
-       doNotPauseOnExceptionsAndMuteConsole: true,
-       contextId: self.runtimeContext.id,
-       returnByValue:false,
-       generatePreview:false
+      expression: expr,
+      objectGroup: "completion",
+      includeCommandLineAPI: true,
+      doNotPauseOnExceptionsAndMuteConsole: true,
+      // TODO: not sure why I used contextId, it looks like it works better without context ( defaults to global ? )
+      contextId: self.runtimeContext.id,
+      returnByValue:false,
+      generatePreview:false
     }
     this.client.Runtime.evaluate(evalParams, function(err, res) {
-
       function done(params) {
         self.client.Runtime.releaseObjectGroup({"objectGroup":"completion"});
         callback(null, params);
       }
       if (res.wasThrown)
-        return done(null, [[], line]);
+        return done([[], line]);
       if (res.result.type === 'object') {
         completionsForObj(res.result.objectId, function(err, completions) {
            var allProps = Object.keys(completions.result.value);
@@ -179,6 +180,7 @@ ChromeREPL.prototype = {
     } else {
       client.listTabs(options.host, options.port, function(err, tabs) {
         if(err) return cb(err);
+        // TODO: skip tabs without webSocketDebuggerUrl (likely already being debugged)
         cb(null, tabs[0]);
       });
     }
@@ -249,6 +251,8 @@ ChromeREPL.prototype = {
     this.client.on('connect', function() {
       cb();
       self._scripts = {};
+      self._breakpoints = {};
+      self.hookBridge = new EventEmitter();
       self.client.Runtime.disable();
       self.client.Runtime.enable();
       self.client.Runtime.executionContextCreated(function(ctxInfo) {
@@ -259,6 +263,10 @@ ChromeREPL.prototype = {
       self.client.send('DOM.enable');
       self.client.Debugger.scriptParsed(function(script) {
         self._scripts[script.scriptId] = script;
+      })
+
+      self.hookBridge.on('foo', function(m) {
+        console.log('got foo!', m);
       })
 
       function handleMessage(message) {
@@ -323,11 +331,9 @@ ChromeREPL.prototype = {
       self.client.on('DOM.inspectNodeRequested', function(node) {
         self.client.send('DOM.pushNodesByBackendIdsToFrontend', { backendNodeIds: [node.backendNodeId]}, function(err, nodes) {
           var nodeId = nodes.nodeIds[0];
-          self.client.send('DOM.getOuterHTML', { nodeId: nodeId }, function(err, res) {
-            // TODO: highlight html
-            self.writeLn(res.outerHTML);
-            self.client.send('DOM.setInspectMode', { mode: 'none' });
-          });
+          // TODO: replace with event emitter
+          if (self.onNodeSelected)
+            self.onNodeSelected(nodeId)
         });
       });
 
@@ -351,8 +357,26 @@ ChromeREPL.prototype = {
         self.writeLn(frames);
       }
 
-      self.displaySource = function() {
-        var NUM_LINES = 5;
+      /*
+      self.client.Runtime.evaluate({expression: 'window.__CRCONSOLE_HOOK__ = function (type, payload) { }' }, function(err, res) {
+        self.client.send('Debugger.getFunctionDetails', { functionId: res.result.objectId }, function(err, res) {
+          self.client.Debugger.setBreakpoint(res.details, function(err, setBpRes) {
+            console.log(res);
+            self._hookScriptId = res.details.location.scriptId;
+          });
+        });
+      });
+      */
+
+      self.breakpointsForLocation = function(location) {
+        var res = null;
+        if (self._breakpoints[location.scriptId] && self._breakpoints[location.scriptId][location.lineNumber])
+          res = self._breakpoints[location.scriptId][location.lineNumber];
+        return res;
+      }
+
+      self.displaySource = function(n) {
+        var NUM_LINES = n || 5;
         function pad(maxLine, breakLine, num) {
           var spaces = '                       ';
           var w = String(maxLine).length;
@@ -378,9 +402,17 @@ ChromeREPL.prototype = {
             theme: resolveCardinalTheme()
           }).split('\n');
           for (var i=startLine; i < lastLine; ++i) {
-          var prefix = pad(lastLine, lineNumber, i);
-          if (src[i])
-            out.push(prefix + src[i]);
+            var prefix = pad(lastLine, lineNumber, i);
+            var bpsForLine = self.breakpointsForLocation({
+              scriptId: frame.location.scriptId,
+              lineNumber: i
+            });
+            if (bpsForLine) {
+              prefix = prefix.red;
+            }
+
+            if (src[i])
+              out.push(prefix + src[i]);
           }
           self.writeLn(out.join('\n'));
           // TODO mark current column with underline?
@@ -390,7 +422,31 @@ ChromeREPL.prototype = {
         });
       }
 
+      function handleHook(params) {
+        if (params.callFrames && params.callFrames[0] && params.callFrames[0].location.scriptId == self._hookScriptId) {
+          var callFrameId = params.callFrames[0].callFrameId;
+          self.client.Debugger.evaluateOnCallFrame({
+            callFrameId: callFrameId,
+            expression: 'type' // must be string
+          }, function(err, respType) {
+            self.client.Debugger.evaluateOnCallFrame({
+              callFrameId: callFrameId,
+              expression: 'payload' // must bestring
+            }, function(err, respPayload) {
+              self.hookBridge.emit(respType.result.value, respPayload.result)
+              self.client.Debugger.resume();
+            });
+          });
+          return true;
+        }
+        return false;
+      }
+
       self.client.Debugger.paused(function(params) {
+        var hookHandled = handleHook(params);
+        if (hookHandled)
+          return;
+
         self._breakFrameId = 0;
         self._breakFrames = params.callFrames;
         self.client.send('Page.setOverlayMessage', {message: 'paused in crconsole'});
@@ -445,16 +501,23 @@ ChromeREPL.prototype = {
       // node repl adds () to eval input while iojs not
       // try to detect here and remove
       if (input.slice(-2) === '\n)' && input.slice(0,1) == '(')
-        return input.slice(1,-2);
-      return input;
+        return input.slice(1,-2).trim();
+      return input.trim();
     };
     var self = this;
     if (!self._breakFrames) {
-      this.client.Runtime.evaluate({expression: removeBrackets(input), generatePreview: true}, function(err, resp) {
+      this.client.Runtime.evaluate({
+        expression: removeBrackets(input),
+        //generatePreview: true,
+        objectGroup: 'console',
+        contextId: self.runtimeContext.id,
+        includeCommandLineAPI: true
+      }, function(err, resp) {
         //cdir(resp, { cb: function() {
         //  cb(null, resp);
         //}});
-        //return cb(null, resp);
+        console.log(resp);
+        return cb(null, resp);
       });
     } else {
       var frame = self._breakFrames[self._breakFrameId];
@@ -569,7 +632,6 @@ ChromeREPL.prototype = {
         self.client.Runtime.evaluate({ expression: dimensions }, function(err, res) {
           var width = res.result.value * scale;
           self.client.Page.captureScreenshot(function(err, res) {
-            console.log(res);
             var data = res.data;
             var control = '\033]1337;File=;inline=1;width=' + width + 'px:' + data + '\07';
             //var control = '\033]1337;File=test;inline=1:' + data + '\07';
@@ -602,6 +664,16 @@ ChromeREPL.prototype = {
             }
           }
         });
+        self.onNodeSelected = function(nodeId) {
+          self.writeLn('select node to see inner html');
+          self.client.send('DOM.getOuterHTML', { nodeId: nodeId }, function(err, res) {
+            // TODO: highlight html
+            self.writeLn(res.outerHTML);
+            self.client.send('DOM.setInspectMode', { mode: 'none' });
+            self.onNodeSelected = null;
+            self.repl.displayPrompt();
+          });
+        }
       }
     });
 
@@ -632,6 +704,7 @@ ChromeREPL.prototype = {
     });
     */
 
+    // TODO: add number of steps as a parameter
     this.repl.defineCommand('n', {
       help: 'step next',
       action: function() {
@@ -651,6 +724,96 @@ ChromeREPL.prototype = {
       action: function() {
         self.client.Debugger.resume();
       }
+    });
+
+    this.repl.defineCommand('list', {
+      help: 'list source',
+      action: function(n) {
+        if (n)
+          n = parseInt(n);
+        else
+          n = 5;
+        if (!self._breakFrames) {
+          self.writeLn('Can\'t show backtrace: not stopped in debugger.');
+        } else {
+          self.displaySource(n);
+        }
+      }
+    })
+
+    this.repl.defineCommand('sb', {
+      help: 'set breakpoint',
+      action: function(condition) {
+        if (!self._breakFrames) {
+          self.writeLn('Can\'t set breakpoint: not stopped in debugger.');
+        } else {
+          var frame = self._breakFrames[self._breakFrameId];
+          var params = {
+            location: frame.location
+          }
+          if (condition)
+            params.condition = condition;
+
+          var existingBreakpoint = self.breakpointsForLocation(frame.location);
+          if (existingBreakpoint) {
+            // remove bp
+            self.client.Debugger.removeBreakpoint({
+              breakpointId: existingBreakpoint
+            }, function(err, res) {
+              delete self._breakpoints[frame.location.scriptId][frame.location.lineNumber];
+              self.displaySource();
+            })
+
+          } else {
+            // add bp
+            self.client.Debugger.setBreakpoint(params, function(err, setBpRes) {
+              if (err) {
+                self.displaySource();
+                return;
+              }
+              var actualLocation = setBpRes.actualLocation;
+              var breakpointId = setBpRes.breakpointId;
+
+              if (!self._breakpoints[actualLocation.scriptId])
+                self._breakpoints[actualLocation.scriptId] = {}
+              self._breakpoints[actualLocation.scriptId][actualLocation.lineNumber] = breakpointId;
+              self.displaySource();
+            })
+          }
+        }
+      }
+    })
+
+
+    this.repl.defineCommand('react', function() {
+      function getAgent(cb) {
+        if (!self._reactAgent) {
+          react(self.client, self.repl, function(err, agentId) {
+            self._reactAgent = agentId;
+            cb(null, self._reactAgent);
+          });
+        } else {
+          cb(null, self._reactAgent);
+        }
+      }
+
+      getAgent(function(err, agentId) {
+        var params = {
+          objectId: agentId,
+          arguments: [{objectId: agentId}],
+          // TODO: this.getTree and no arguments?
+          functionDeclaration: 'function(agent) { return agent.getTree() }',
+          doNotPauseOnExceptionsAndMuteConsole: true,
+          returnByValue: true,
+          generatePreview:false
+        };
+        self.client.Runtime.callFunctionOn(params, function(err, res) {
+          var reactTree = JSON.parse(res.result.value);
+          cdir(reactTree, { cb: function() {
+            self.repl.displayPrompt();
+          }});
+        });
+      })
     });
 
     this.repl.defineCommand('net', {
@@ -740,6 +903,7 @@ ChromeREPL.prototype = {
   switchTab: function(index) {
     this.client.close();
     var self = this;
+    self._reactAgent = null;
     this.client.listTabs(this.options.host, this.options.port, function(err, tabs) {
       if (err) throw err;
       var tab = tabs[index];

@@ -22,7 +22,9 @@
   "author": "Andrey Sidorov <sidorares@yandex.ru>",
   "license": "MIT",
   "dependencies": {
+    "acorn": "^3.0.4",
     "cardinal": "^0.6.0",
+    "cdir": "^0.1.2",
     "chrome-remote-interface": "git://github.com/sidorares/chrome-remote-interface.git#switch-tab",
     "colors": "~0.6.2",
     "commander": "~2.0.0",
