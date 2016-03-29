@@ -13,6 +13,19 @@ var EventEmitter = require('events');
 var react = require('./plugins/react');
 
 const PROP_SHOW_COUNT = 5;
+const highlightConfig = {
+  "showInfo": true,
+  "showRulers":false,
+  "showExtensionLines":false,
+  "contentColor":{"r":111,"g":168,"b":220,"a":0.66},
+  "paddingColor":{"r":147,"g":196,"b":125,"a":0.55},
+  "borderColor":{"r":255,"g":229,"b":153,"a":0.66},
+  "marginColor":{"r":246,"g":178,"b":107,"a":0.66},
+  "eventTargetColor":{"r":255,"g":196,"b":196,"a":0.66},
+  "shapeColor":{"r":96,"g":82,"b":177,"a":0.8},
+  "shapeMarginColor":{"r":96,"g":82,"b":127,"a":0.6},
+  "displayAsMaterial":true
+};
 
 module.exports = ChromeREPL;
 
@@ -187,8 +200,29 @@ ChromeREPL.prototype = {
   },
 
   writer: function(output) {
-    if (!output)
+    var self = this;
+    if (!output) {
+      self.client.DOM.hideHighlight();
       return ''
+    }
+
+    // if result is domNode, highlight it, if not - hide
+    //console.log(output, output && output.objectId && output.subtype === 'node');
+    if (output.result && output.result.objectId && output.result.subtype === 'node') {
+      // TODO FIXME: always return nodeId:0 for some reason
+      // Would like to push nodeId to consoleApi via DOM.setInspectedNode but need nodeId for this
+      // self.client.DOM.requestNode({ objectId: output.result.objectId }, function(err, node) {
+      //  console.log('NODE:::', err, node);
+        self.client.DOM.highlightNode({
+          //nodeId: node.nodeId,
+          objectId: output.result.objectId,
+          highlightConfig: highlightConfig
+        })
+      //});
+    } else {
+      self.client.DOM.hideHighlight();
+    }
+    // TODO: check if result is React component and highlight it
 
     function propertyValue(t, v) {
       if (t === 'string')
@@ -215,11 +249,14 @@ ChromeREPL.prototype = {
     if (output.wasThrown) {
       return output.result.description.red;
     }
+    if (output.result.type == 'object' && output.result.subtype == 'null') {
+      return 'null'.blue;
+    }
     if (output.result.type == 'function') {
       return '[Function]'.cyan;
     }
     if (output.result.type == 'undefined')
-      return 'undefined'.gray;
+      return 'undefined'.blue;
 
     if (!output || output.result.type != "object") {
       // let inspect do its thing if it's a literal
@@ -509,14 +546,14 @@ ChromeREPL.prototype = {
       this.client.Runtime.evaluate({
         expression: removeBrackets(input),
         //generatePreview: true,
-        objectGroup: 'console',
-        contextId: self.runtimeContext.id,
+        //objectGroup: 'console',
+        //contextId: self.runtimeContext.id,
         includeCommandLineAPI: true
       }, function(err, resp) {
         //cdir(resp, { cb: function() {
         //  cb(null, resp);
         //}});
-        console.log(resp);
+        //console.log(resp);
         return cb(null, resp);
       });
     } else {
@@ -813,31 +850,37 @@ ChromeREPL.prototype = {
             // agent -> get element for node
             // print node
             // set window.$r to point to node
-            self.client.send('DOM.resolveNode', { nodeId: nodeId}, function(err, res) {
-              self._stopInspect();
-              var params = {
-                objectId: agentId,
-                arguments: [{objectId: agentId}, {objectId: res.object.objectId}],
-                functionDeclaration: `function(agent, node) {
-                  var id = agent.getIDForNode(node);
-                  var data = agent.elementData.get(id);
-                  if (data && data.publicInstance) {
-                    window.rrr = data.publicInstance;
+            self.client.Runtime.evaluate({ expression: 'window' }, function(err, globalRes) {
+              console.log(globalRes);
+              self.client.send('DOM.resolveNode', { nodeId: nodeId}, function(err, nodeRes) {
+                self._stopInspect();
+                var params = {
+                  objectId: agentId,
+                  arguments: [{objectId: agentId}, nodeRes.object, globalRes.result],
+                  functionDeclaration: `function(agent, node, global) {
+                    var id = agent.getIDForNode(node);
+                    var data = agent.elementData.get(id);
+                    if (data && data.publicInstance) {
+                      global.$r4 = global.$3;
+                      global.$r3 = global.$r2;
+                      global.$r2 = global.$r1;
+                      global.$r1 = global.$r;
+                      global.$r = data.publicInstance;
+                    }
+                    console.log(global, global.$r);
+                    console.log(id)
+                    console.log(data)
+                    return JSON.stringify(agent._subTree(data));
                   }
-                  console.log(window.rrr);
-                  console.log(id)
-                  console.log(data)
-                  return JSON.stringify(agent._subTree(data));
-                }
-                `,
-                doNotPauseOnExceptionsAndMuteConsole: true,
-                returnByValue: true,
-                generatePreview:false
-              };
-              self.client.Runtime.callFunctionOn(params, function(err, res) {
-                console.log(err, res);
+                  `,
+                  doNotPauseOnExceptionsAndMuteConsole: true,
+                  returnByValue: true,
+                  generatePreview:false
+                };
+                self.client.Runtime.callFunctionOn(params, function(err, res) {
+                  console.log(err, res);
+                });
               });
-
             });
           });
         }
