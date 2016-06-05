@@ -10,6 +10,7 @@ var cardinal = require('cardinal');
 var resolveCardinalTheme = require('cardinal/settings').resolveTheme;
 var EventEmitter = require('events');
 
+
 var react = require('./plugins/react');
 
 const PROP_SHOW_COUNT = 5;
@@ -37,30 +38,41 @@ ChromeREPL.prototype = {
     this.connect(options, function(err, tab) {
       if (err) throw err;
       var self = this;
-
+      this.bufferedMessages = [];
+      self.screencasting = false;
       this.setTab(tab, function() {
-        if (!self.repl) {
-          self.repl = repl.start({
-            prompt: self.getPrompt(),
-            eval: self.eval.bind(self),
-            input: process.stdin,
-            output: process.stdout,
-            writer: self.writer.bind(self)
-          });
-          if (!self.repl.setPrompt) { // assume node pre0.12 or io.js
-            self.repl.setPrompt = function(p) {
-              self.repl.prompt = p;
-            };
-          }
-          self.defineCommands();
-          self.replComplete  = self.repl.complete;
-          self.repl.complete = self.complete.bind(self);
-        } else {
-          self.repl.displayPrompt();
-        }
+        self.mouse = require('term-mouse')(); //{ input: self.repl.inputStream, output: self.repl.outputStream });
+        self.mouse.stop();
+        self.createRepl();
       });
 
     }.bind(this))
+  },
+
+  createRepl: function() {
+    var self = this;
+    if (self.repl) {
+      self.repl.close();
+      self.repl = null;
+    }
+    if (!self.repl) {
+      self.repl = repl.start({
+        prompt: self.getPrompt(),
+        eval: self.eval.bind(self),
+        input: process.stdin,
+        output: process.stdout,
+        writer: self.writer.bind(self)
+      });
+      if (!self.repl.setPrompt) { // assume node pre0.12 or io.js
+        self.repl.setPrompt = function(p) {
+          self.repl.prompt = p;
+        };
+      }
+      self.defineCommands();
+      self.replComplete  = self.repl.complete;
+      self.repl.complete = self.complete.bind(self);
+      require('repl.history')(self.repl, process.env.HOME + '/.crmux_history');
+    }
   },
 
   complete: function (line, callback) {
@@ -306,7 +318,11 @@ ChromeREPL.prototype = {
         console.log('got foo!', m);
       })
 
-      function handleMessage(message) {
+      self.handleMessage = function(message) {
+        if (self.screencasting) {
+          self.bufferedMessages.push(message);
+          return;
+        }
         // TODO: handle objects. reuse eval's mirroring
         //console.log(JSON.stringify(message, null, 4));
         var stack = message.message.stackTrace;
@@ -355,7 +371,7 @@ ChromeREPL.prototype = {
 
       self.client.Console.messageAdded(function(message) {
         self.lastMessage = message;
-        handleMessage(message);
+        self.handleMessage(message);
       });
 
       // TODO: implement counter. Meanwhile, just repeat last message
@@ -670,9 +686,15 @@ ChromeREPL.prototype = {
           var width = res.result.value * scale;
           self.client.Page.captureScreenshot(function(err, res) {
             var data = res.data;
-            var control = '\033]1337;File=;inline=1;width=' + width + 'px:' + data + '\07';
-            //var control = '\033]1337;File=test;inline=1:' + data + '\07';
-            self.writeLn(control);
+            getCursorPosition(function(posBeforeFrame) {
+              var control = '\033]1337;File=;inline=1;width=' + width + 'px:' + data + '\07';
+              //var control = '\033]1337;File=test;inline=1:' + data + '\07';
+              //
+              self.write(control);
+              getCursorPosition(function(posAfterFrame) {
+                console.log(posBeforeFrame, posAfterFrame);
+              });
+            });
           });
         });
       }
@@ -723,32 +745,152 @@ ChromeREPL.prototype = {
       }
     });
 
-    /*
-
     // WIP: allow to record to gif?
     // see https://github.com/sidorares/rfbrecord
 
-    this.repl.defineCommand('record', {
+    var up = function up (i, save) {
+      i = i || 1;
+      if (i > 0) {
+        while(i--) {
+          self.write(!save ? '\033[K\033[1A\r' : '\033[1A\r');
+        }
+      }
+    };
+
+    var cursorTo = require('./lib/term-utils.js').cursorTo;
+    var getCursorPosition = require('./lib/term-utils.js').getCursorPosition;
+
+    this.repl.defineCommand('screencast', {
       help: 'start screencast',
       action: function() {
+        self.screencasting = true;
         self.client.send('Page.startScreencast',
         //self.client.Page.startScreencast({
         {
-          format: 'jpeg',
-          quelity: 10
+          format: 'png',
+          quality: 100
+        }, function(err, res) {
+          //console.log('AAAAA', err, res);
         })
-        self.client.on('Page.screencastFrame', function(params) {
+        var firstFrame = true;
+        var heightRows = 20; //process.stdout.columns - 5; //40;
+        var lastFrameRows = 0;
+        var lastMeta = null;
+
+        var frameStartCursor = null;
+
+        var onFrame = function(params) {
+          //if (firstFrame) {
+          //  for (var i =0; i < heightRows; ++i)
+          //    process.stdout.write('\n');
+          //}
+          //up(heightRows, true);
+
+
+          lastMeta = params.metadata;
           var data = params.data;
-          var width = params.metadata.deviceWidth / 4;
-          var control = '\033]1337;File=;inline=1;width=' + width + 'px:' + data + '\07';
-          self.writeLn(control);
-          self.client.send('Page.screencastFrameAck', {
-            sessionId: params.sessionId
+          //var deviceAspect = params.metadata.deviceWidth / params.metadata.deviceHeight;
+          //var ttyAspect = process.stdout.columns / process.stdout.rows;
+          // heightRows = process.stdout.rows - 5;
+          //else {
+          //
+          //}
+          //var control = '\033]1337;File=;inline=1;height=' + heightRows + ':' + data + '\07';
+          var control = '\n\033]1337;File=;inline=1;height=auto:' + data + '\07';
+          getCursorPosition(function(posBeforeFrame) {
+            //var control = '\033]1337;File=;inline=1;width=10:' + data + '\07';
+            //if (!firstFrame)
+            //  up(10*heightRows+1, true);
+            //else
+            //  up(process.stdout.columns)
+            if (!firstFrame) {
+              cursorTo(frameStartCursor.column-1, frameStartCursor.row-1);
+              //cursorTo(0, 20);
+              //console.log(frameStartCursor.row, frameStartCursor.column);
+            } else {
+              frameStartCursor = posBeforeFrame
+              firstFrame = false;
+            }
+            //self.write(control);
+            getCursorPosition(function(posAfterFrame) {
+              //console.log(posBeforeFrame, posAfterFrame)
+                self.client.send('Page.screencastFrameAck', {
+                   sessionId: params.sessionId
+                });
+                //console.log(posBeforeFrame, posAfterFrame)
+                //process.stdout.write(JSON.stringify([posBeforeFrame, posAfterFrame]));
+            });
           });
+        };
+
+        self.client.on('Page.screencastFrame', onFrame);
+        var history = self.repl.history;
+        var mouseEvent = null;
+        var handleData = function (b) {
+          if (b[0] == 3) {
+            self.client.send('Page.stopScreencast');
+            self.client.removeListener('Page.screencastFrame', onFrame);
+            self.mouse.stop();
+            process.stdin.removeListener('data', handleData);
+            self.mouse.removeListener('event', mouseEvent);
+            process.stdin.setRawMode(false);
+            self.createRepl();
+            self.repl.history = history;
+            self.screencasting = false;
+            var m;
+            while(m = self.bufferedMessages.shift()) {
+              self.handleMessage(m);
+            }
+          } else {
+            var s = b.toString('utf8');
+            var evt = {}
+            // todo find if there is mapping table ansi -> keycode names
+            if (b[0] == 0x7f) {
+              evt.code = 'Backspace';
+              keyIdentifier: 'U+0008';
+              evt.type = 'keyDown'
+              self.client.send('Input.dispatchKeyEvent', evt);
+              self.client.send('Input.dispatchKeyEvent', {
+                code: 'Backspace',
+                keyIdentifier: 'U+0008',
+                type: 'keyUp'
+              });
+            } else {
+              evt.text = s;
+              evt.type = 'char'
+              self.client.send('Input.dispatchKeyEvent', evt);
+            }
+          }
+        };
+        var mouseEvent = function(e) {
+          //console.log('you clicked %d,%d with the %s mouse button', e.x, e.y, e.button);
+          console.log(e);
+          //if (!lastMeta)
+          //  return;
+          //var deviceY = Math.floor(e.y/heightRows*lastMeta.deviceHeight);
+          //var deviceX = Math.floor(0.5*e.x/heightRows*lastMeta.deviceHeight);
+          //console.log(e.x, e.y, deviceX, deviceY);
+
+          var deviceX = e.x*3;
+          var deviceY = (e.y-1)*7;
+
+          self.client.send('Input.dispatchMouseEvent', {
+            type: 'mouseMoved', // mousePressed, mouseReleased, mouseMoved.
+            x: deviceX,
+            y: deviceY
+          }, function(err, res) {
+            //console.log('Input.dispatchMouseEvent', err, res)
+          });
+        };
+        self.repl.on('close', function() {
+            process.stdin.setRawMode(true);
+            self.mouse.start();
+            self.mouse.on('move', mouseEvent);
+            process.stdin.on('data', handleData);
         });
+        self.repl.close();
       }
-    });
-    */
+    })
 
     // TODO: add number of steps as a parameter
     this.repl.defineCommand('n', {
@@ -867,9 +1009,9 @@ ChromeREPL.prototype = {
                       global.$r1 = global.$r;
                       global.$r = data.publicInstance;
                     }
-                    console.log(global, global.$r);
-                    console.log(id)
-                    console.log(data)
+                    //console.log(global, global.$r);
+                    //console.log(id)
+                    //console.log(data)
                     return JSON.stringify(agent._subTree(data));
                   }
                   `,
@@ -899,9 +1041,12 @@ ChromeREPL.prototype = {
         };
         self.client.Runtime.callFunctionOn(params, function(err, res) {
           var reactTree = JSON.parse(res.result.value);
-          cdir(reactTree, { cb: function() {
+          self.writeLn(res.result.value, function() {
             self.repl.displayPrompt();
-          }});
+          });
+          //cdir(reactTree, { cb: function() {
+          //  self.repl.displayPrompt();
+          //}});
         });
       });
     });
@@ -1016,7 +1161,7 @@ ChromeREPL.prototype = {
       if (err) throw err;
 
       var strs = "";
-      for (var i in tabs) {
+      for (var i =0; i < tabs.length; ++i) {
         strs += "[" + i + "] " + tabs[i].url + "\n";
       }
 
