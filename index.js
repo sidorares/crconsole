@@ -1157,7 +1157,7 @@ ChromeREPL.prototype = {
   },
 
   listTabs: function() {
-    this.client.listTabs(this.host, this.options.port, function(err, tabs) {
+    this.client.listTabs(this.options.host, this.options.port, function(err, tabs) {
       if (err) throw err;
 
       var strs = "";
