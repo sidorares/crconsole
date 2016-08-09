@@ -1,0 +1,10 @@
+version: v1.5.0
+ignore:
+  'npm:ws:20160624':
+    - chrome-remote-interface > ws:
+        reason: None given
+        expires: '2016-09-08T04:35:03.355Z'
+patch:
+  'npm:ws:20160104':
+    - chrome-remote-interface > ws:
+        patched: '2016-08-09T04:35:03.413Z'

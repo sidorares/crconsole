@@ -32,6 +32,12 @@
     "get-cursor-position": "0.0.5",
     "node-chrome-runner": "0.0.5",
     "repl.history": "^0.1.3",
-    "term-mouse": "^0.1.1"
-  }
+    "term-mouse": "^0.1.1",
+    "snyk": "^1.18.0"
+  },
+  "scripts": {
+    "snyk-protect": "snyk protect",
+    "prepublish": "npm run snyk-protect"
+  },
+  "snyk": true
 }
