@@ -1,4 +1,6 @@
 # crconsole
+
+[![Greenkeeper badge](https://badges.greenkeeper.io/sidorares/crconsole.svg)](https://greenkeeper.io/)
 `crconsole` is a remote Javascript console for Chrome/Webkit that runs in your terminal:
 
 ![crconsole in Terminal](https://f.cloud.github.com/assets/173025/1191227/f5bae2f4-244b-11e3-8440-6b67fab21004.png)
