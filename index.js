@@ -71,7 +71,7 @@ ChromeREPL.prototype = {
       self.defineCommands();
       self.replComplete  = self.repl.complete;
       self.repl.complete = self.complete.bind(self);
-      require('repl.history')(self.repl, process.env.HOME + '/.crmux_history');
+      require('repl-story')(self.repl, process.env.HOME + '/.crmux_history');
     }
   },
 
